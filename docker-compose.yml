@@ -1,12 +1,12 @@
-# Laboratorio iptables: 1 server (firewall) + 2 client su rete isolata.
-# Avvio:  docker compose up -d --build
+# Lab iptables: 1 server (firewall) + 2 client on isolated network.
+# Start:  docker compose up -d --build
 services:
   server:
     build: ./server
     container_name: fw-server
     hostname: fw-server
     cap_add:
-      - NET_ADMIN        # necessario per usare iptables nel container
+      - NET_ADMIN        # necessary to use IPTABLES
     networks:
       lab:
         ipv4_address: 172.28.0.10
@@ -16,7 +16,7 @@ services:
     container_name: fw-client1
     hostname: client1
     cap_add:
-      - NET_RAW          # per ping/nmap
+      - NET_RAW          # for ping/nmap
     networks:
       lab:
         ipv4_address: 172.28.0.21
