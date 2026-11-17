@@ -5,4 +5,4 @@ iptables -P FORWARD ACCEPT
 iptables -P OUTPUT ACCEPT
 iptables -F
 iptables -X
-echo "Firewall resettato (policy ACCEPT, nessuna regola)."
+echo "Firewall reset (policy ACCEPT, no rule enforced)."
