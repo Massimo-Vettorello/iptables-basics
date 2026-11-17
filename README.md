@@ -1,6 +1,6 @@
-# iptables Lab (student demo)
+# iptables demo
 
-Based on the topics of *Iptables Essentials* (DigitalOcean): listing/flushing rules, default policies,
+Based on the topics of *Iptables Essentials* [(DigitalOcean)](https://www.digitalocean.com/community/tutorials/iptables-essentials-common-firewall-rules-and-commands#iptables-vs-ufw): listing/flushing rules, default policies,
 loopback, established connections, SSH/HTTP/MySQL, ping, blocking IPs, REJECT vs DROP, logging, saving rules.
 
 ## Topology
@@ -49,14 +49,16 @@ iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -p tcp --dport 22 -j ACCEPT
 iptables -P INPUT DROP
 ```
-`check` → only SSH OPEN. Show `iptables -L -n -v` and the counters going up.
-Explain why ESTABLISHED is needed (without it, replies cannot come back in).
+`check` → only SSH OPEN. 
+
+`iptables -L -n -v` will show how byte counter and packet counter grows with increasing request from the clients.
+
 
 **3. Open HTTP**
 ```bash
 iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 ```
-Client: `curl http://172.28.0.10`
+Client: `curl http://172.28.0.10` → check before and after setting up the command.
 
 **4. MySQL from a single IP (client1 yes, client2 no)**
 ```bash
@@ -76,14 +78,13 @@ Before: `ping` fails; after: it works. Then remove it with `iptables -D INPUT -p
 iptables -A INPUT -p tcp --dport 5432 -j REJECT --reject-with tcp-reset
 ```
 `check` → 5432 "REFUSED" (immediate reply) while the other closed ports show "TIMEOUT".
-Discussion: with DROP the attacker cannot tell whether the host exists; with REJECT they can, but the client doesn't hang waiting.
+With DROP the attacker cannot tell whether the host exists; with REJECT they can, but the client doesn't hang waiting.
 
 **7. Block an IP**
 ```bash
 iptables -I INPUT 1 -s 172.28.0.22 -j DROP   # -I = insert at the top
 ```
-From client2 nothing gets through anymore, not even HTTP. Show why `-I` and not `-A`
-(evaluation order: the first matching rule wins).
+From client2 nothing gets through anymore, not even HTTP.
 
 **8. Logging (with NFLOG + tcpdump)**
 > Why not `-j LOG`? Inside a container the kernel does not write LOG entries to its log
