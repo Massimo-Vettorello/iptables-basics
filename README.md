@@ -1,119 +1,131 @@
-# Laboratorio iptables (demo per studenti)
+# iptables Lab (student demo)
 
-Basato sui temi di *Iptables Essentials* (DigitalOcean): liste/flush, policy di default,
-loopback, connessioni established, SSH/HTTP/MySQL, ping, blocco IP, REJECT vs DROP, LOG, salvataggio.
+Based on the topics of *Iptables Essentials* (DigitalOcean): listing/flushing rules, default policies,
+loopback, established connections, SSH/HTTP/MySQL, ping, blocking IPs, REJECT vs DROP, logging, saving rules.
 
-## Topologia
+## Topology
 
-| Container   | IP            | Ruolo                                              |
-|-------------|---------------|----------------------------------------------------|
-| fw-server   | 172.28.0.10   | Server col firewall: SSH 22, HTTP 80, "MySQL" 3306, "Postgres" 5432 |
-| fw-client1  | 172.28.0.21   | Client/attaccante 1 (nmap, nc, curl, ssh, hping3)  |
-| fw-client2  | 172.28.0.22   | Client 2 (per demo "solo questo IP")               |
+| Container   | IP            | Role                                                |
+|-------------|---------------|-----------------------------------------------------|
+| fw-server   | 172.28.0.10   | Server with the firewall: SSH 22, HTTP 80, "MySQL" 3306, "Postgres" 5432 |
+| fw-client1  | 172.28.0.21   | Client/attacker 1 (nmap, nc, curl, ssh, hping3)     |
+| fw-client2  | 172.28.0.22   | Client 2 (for the "this IP only" demos)             |
 
-Rete bridge isolata `172.28.0.0/24`. Le regole iptables vivono solo nel container server
-(network namespace proprio): **non toccano il tuo host**.
+Isolated bridge network `172.28.0.0/24`. The iptables rules live only inside the server container
+(its own network namespace): **they do not touch your host**.
 
-## Avvio
+## Getting started
 
 ```bash
 docker compose up -d --build
-# Terminale A (server)
+# Terminal A (server)
 docker exec -it fw-server bash
-# Terminale B (client1)
+# Terminal B (client1)
 docker exec -it fw-client1 bash
-# Terminale C (client2, opzionale)
+# Terminal C (client2, optional)
 docker exec -it fw-client2 bash
 ```
 
-Comandi utili: sul server `lab-show` (regole con contatori) e `lab-reset` (torna a tutto aperto);
-sul client `check` (tabella OPEN / REFUSED / TIMEOUT).
+Handy commands: on the server `lab-show` (rules with counters), `lab-log` (live NFLOG output) and `lab-reset` (back to everything open);
+on the client `check` (OPEN / REFUSED / TIMEOUT table).
 
-Spegnere tutto: `docker compose down`.
+Shut everything down: `docker compose down`.
 
-## Scaletta della demo
+## Demo outline
 
-**0. Stato iniziale** – (client1) `check` → tutto OPEN. (server) `iptables -L -n -v`, `iptables -S`.
+**0. Initial state** – (client1) `check` → everything OPEN. (server) `iptables -L -n -v`, `iptables -S`.
 
-**1. Policy DROP senza regole = lockout** – *Messaggio chiave: l'ordine conta.*
+**1. DROP policy with no rules = lockout** – *Key message: order matters.*
 ```bash
 iptables -P INPUT DROP          # server
-check                           # client1: tutto in TIMEOUT
+check                           # client1: everything TIMEOUT
 ```
-`lab-reset` per recuperare. (In una VM reale, via SSH, si perderebbe l'accesso!)
+Run `lab-reset` to recover. (On a real VM, over SSH, you would lose access!)
 
-**2. Regole base sicure**
+**2. Safe baseline rules**
 ```bash
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -p tcp --dport 22 -j ACCEPT
 iptables -P INPUT DROP
 ```
-`check` → solo SSH OPEN. Mostrare `iptables -L -n -v` e i contatori che salgono.
-Spiegare perché serve ESTABLISHED (senza, le risposte non rientrano).
+`check` → only SSH OPEN. Show `iptables -L -n -v` and the counters going up.
+Explain why ESTABLISHED is needed (without it, replies cannot come back in).
 
-**3. Aprire HTTP**
+**3. Open HTTP**
 ```bash
 iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 ```
 Client: `curl http://172.28.0.10`
 
-**4. MySQL solo da un IP (client1 sì, client2 no)**
+**4. MySQL from a single IP (client1 yes, client2 no)**
 ```bash
 iptables -A INPUT -p tcp -s 172.28.0.21 --dport 3306 -j ACCEPT
 ```
-client1: `nc -v 172.28.0.10 3306` → banner; client2: stesso comando → timeout.
-Variante: interi sottoreti con `-s 172.28.0.0/24`.
+client1: `nc -v 172.28.0.10 3306` → banner; client2: same command → timeout.
+Variant: whole subnets with `-s 172.28.0.0/24`.
 
 **5. Ping (ICMP)**
 ```bash
 iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT
 ```
-Prima: `ping` fallisce; dopo: funziona. Poi eliminarla con `iptables -D INPUT -p icmp --icmp-type echo-request -j ACCEPT`.
+Before: `ping` fails; after: it works. Then remove it with `iptables -D INPUT -p icmp --icmp-type echo-request -j ACCEPT`.
 
 **6. DROP vs REJECT**
 ```bash
 iptables -A INPUT -p tcp --dport 5432 -j REJECT --reject-with tcp-reset
 ```
-`check` → 5432 "REFUSED" (risposta immediata) mentre le altre porte chiuse vanno in "TIMEOUT".
-Discussione: con DROP l'attaccante non sa se il server esiste; con REJECT sì ma il client non resta ad aspettare.
+`check` → 5432 "REFUSED" (immediate reply) while the other closed ports show "TIMEOUT".
+Discussion: with DROP the attacker cannot tell whether the host exists; with REJECT they can, but the client doesn't hang waiting.
 
-**7. Bloccare un IP**
+**7. Block an IP**
 ```bash
-iptables -I INPUT 1 -s 172.28.0.22 -j DROP   # -I = inserisci in cima
+iptables -I INPUT 1 -s 172.28.0.22 -j DROP   # -I = insert at the top
 ```
-Da client2 non passa più niente, nemmeno HTTP. Mostrare perché `-I` e non `-A`
-(l'ordine di valutazione: prima regola che combacia vince).
+From client2 nothing gets through anymore, not even HTTP. Show why `-I` and not `-A`
+(evaluation order: the first matching rule wins).
 
-**8. Logging**
+**8. Logging (with NFLOG + tcpdump)**
+> Why not `-j LOG`? Inside a container the kernel does not write LOG entries to its log
+> (and on Docker Desktop the host is a VM). `NFLOG` works everywhere instead: the packet is
+> sent to a "group" that you read with `tcpdump`.
+
+Terminal A (server): insert the rule **at the top** (otherwise earlier ACCEPT/DROP rules bypass it) and start listening
 ```bash
-iptables -I INPUT 1 -p tcp --dport 3306 -m limit --limit 5/min -j LOG --log-prefix "MYSQL-TRY: "
+iptables -I INPUT 1 -p tcp --dport 3306 -j NFLOG --nflog-group 1 --nflog-prefix "MYSQL-TRY: "
+lab-log 1                       # = tcpdump -l -nn -i nflog:1
 ```
-Lo scan lanciato da client: `nmap -Pn 172.28.0.10`.
-> Nota: il log del kernel è condiviso con l'host. Si legge con `sudo dmesg -w | grep MYSQL-TRY`
-> **sull'host** (Linux). Su Docker Desktop (Mac/Windows) può non essere visibile: usare
-> `tcpdump -ni eth0` nel server come alternativa.
+Terminal B (client1): run the scan
+```bash
+nmap -Pn -p 22,80,3306,5432 172.28.0.10
+```
+Terminal A shows the SYN packets to port 3306. Cross-check without logs: `iptables -L INPUT -n -v`
+→ the `pkts` counter of the NFLOG rule goes up with every scan.
+To tell several rules apart, use different groups (`--nflog-group 1`, `2`...) and `lab-log 2`.
 
-**9. Salvare e ripristinare**
+*Alternative with classic `LOG`:* Linux hosts only, with
+`sudo sysctl -w net.netfilter.nf_log_all_netns=1` and then `sudo dmesg -w | grep MYSQL-TRY` on the host.
+
+**9. Save and restore**
 ```bash
 iptables-save > /root/rules.v4
 lab-reset
 iptables-restore < /root/rules.v4
 ```
-Spiegare che nei sistemi reali serve `iptables-persistent` / `netfilter-persistent`.
+Explain that real systems need `iptables-persistent` / `netfilter-persistent`.
 
-**10. Rimozione regole**
-`iptables -L --line-numbers`, poi `iptables -D INPUT 3`; `iptables -F` per svuotare.
+**10. Removing rules**
+`iptables -L --line-numbers`, then `iptables -D INPUT 3`; `iptables -F` to flush everything.
 
-## Esercizi per gli studenti
+## Student exercises
 
-1. Consenti solo SSH da `172.28.0.21`, tutto il resto in DROP.
-2. Consenti HTTP ma limita a 10 nuove connessioni/minuto (`-m limit` o `-m hashlimit`).
-3. Blocca la porta 5432 con REJECT e la 3306 con DROP; confronta i tempi con `check`.
-4. Scrivi uno script che applica un set completo di regole e verifica con `check`.
+1. Allow SSH only from `172.28.0.21`, DROP everything else.
+2. Allow HTTP but limit it to 10 new connections per minute (`-m limit` or `-m hashlimit`).
+3. Block port 5432 with REJECT and port 3306 with DROP; compare the timings with `check`.
+4. Write a script that applies a complete rule set and verify it with `check`.
 
-## Note di sicurezza e troubleshooting
+## Security notes and troubleshooting
 
-- Il server ha `root` / `student` per SSH: **solo per il laboratorio**, rete isolata, nessuna porta pubblicata sull'host.
-- Se `iptables` dà errori di backend, nel server: `update-alternatives --set iptables /usr/sbin/iptables-legacy`.
-- Ricorda di aprire il traffico *prima* di mettere la policy DROP; in caso di errore: `lab-reset`.
+- The server has `root` / `student` for SSH: **lab use only**, isolated network, no ports published on the host.
+- If `iptables` complains about the backend, on the server: `update-alternatives --set iptables /usr/sbin/iptables-legacy`.
+- Remember to open the traffic you need *before* setting the DROP policy; if you make a mistake: `lab-reset`.
